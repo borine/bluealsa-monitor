@@ -1,0 +1,2 @@
+option('udev', type : 'feature', value : 'enabled', description : 'install sudoers file for udev permissions')
+

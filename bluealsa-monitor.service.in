@@ -1,0 +1,9 @@
+[Unit]
+Description=Bluealsa PCM manager
+
+[Service]
+Type=simple
+ExecStart=@prefix@/bin/bluealsa-monitor
+
+[Install]
+WantedBy=default.target

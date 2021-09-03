@@ -1,0 +1,3 @@
+
+%audio ALL=(ALL:ALL) NOPASSWD: /bin/udevadm trigger --action=change /dev/snd/controlC0
+
