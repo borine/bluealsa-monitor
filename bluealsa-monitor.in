@@ -233,7 +233,7 @@ remove_namehint() {
 	unset defaults["$1"]
 }
 
-# update the config pcm.!default entry is necessary
+# update the config pcm.!default entry if necessary
 set_default() {
 	[[ "$use_default" = false ]] && return
 
@@ -284,10 +284,10 @@ add_initial_pcms() {
 
 # remove all pcms if bluealsa service terminates
 handle_service_stopped_event() {
-    for item in "${!pcms[@]}" ; do
+	for item in "${!pcms[@]}" ; do
 		remove_namehint "$item"
-    done
-		sed -i '/^pcm.!default/d' "$conffile" 2>/dev/null
+	done
+	sed -i '/^pcm.!default/d' "$conffile" 2>/dev/null
 	[[ "$use_default" = false ]] || sed -i '/^pcm.!default/d' "$conffile" 2>/dev/null
 	udev_trigger
 }
@@ -300,7 +300,7 @@ finished() {
 
 # delete all stale entries from alsa config file
 cat  > "$conffile" <<EOF
-# DO NOT EDIT - automatically managed by bluealsa-conf service
+# DO NOT EDIT - automatically managed by bluealsa-monitor service
 bluealsa.default.capture.pcm {
 	type asym
 	capture.pcm "pcm.bluealsa:PROFILE=$profile$srv"
@@ -335,7 +335,7 @@ exec {MONITOR_FD}<>$FIFO
 # unlink the named pipe
 rm $FIFO
 
-# make sure the pipeline is shut down if this script interrupted
+# make sure the pipeline is shut down if this script is interrupted
 trap "kill %1; finished; exec {MONITOR_FD}>&-; exit 0" INT TERM
 
 # include bluealsa config into user config

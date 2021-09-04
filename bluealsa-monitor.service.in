@@ -1,5 +1,6 @@
 [Unit]
 Description=Bluealsa PCM manager
+Documentation=https://github.com/borine/bluealsa-monitor
 
 [Service]
 Type=simple

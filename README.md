@@ -18,9 +18,11 @@ a list of available bluetooth PCMs. For command-line users, the utility
 need a way have the connected bluetooth PCMs appear through the ALSA
  _*namehint*_ API in the same way as sound card devices.
 
-This project provides s bash script and associated system files to generate
+This project provides a bash script and associated system files to generate
 dynamic ALSA configuration changes as bluetooth audio devices connect or
-disconnect such that those devices appear as PCMs in the namehint API.
+disconnect such that those devices appear as PCMs in the namehint API. The
+current version supports only a single running instance of the `bluealsa`
+service. 
 
 The script relies on the `bluealsa-cli` utility which is part of the above
 bluez-alsa project. bluez-alsa v3.2.0 or later is required as earlier versions
@@ -60,8 +62,9 @@ $ aplay -D bluealsa:DEV=01:23:45:67:89:AB,PROFILE=a2dp music.wav
 
 ```
 
-> _to make it easier to type device ids on the command line, use a bash
-completion script, such as https://github.com/borine/alsa-utils-completions_
+> _to make it easier to type device ids on the command line with `aplay` and 
+> `arecord`, use a bash completion script, such as
+>  https://github.com/borine/alsa-utils-completions_
 
 
 ## Installation
