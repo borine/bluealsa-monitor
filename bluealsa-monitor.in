@@ -51,6 +51,7 @@ declare -A pcms
 declare -A ctls
 declare -A new_pcm
 declare -A defaults
+declare -a alsaver
 
 print_help() {
 	cat <<-EOF
@@ -137,6 +138,24 @@ parse_default() {
 
 [[ "$use_default" = false ]] || parse_default
 
+# get alsa installed version
+get_alsaver() {
+	alsa_ver_str=$(aplay --version)
+	alsa_ver_str=${alsa_ver_str% by*}
+	alsa_ver_str=${alsa_ver_str#*version }
+	local IFS=.
+	alsaver=( $alsa_ver_str )
+}
+
+# For libasound version < 1.2.3.2, we need to include the tag "DESC" in a namehint
+DESC="DESC"
+get_alsaver
+if [[ "${alsaver[0]}" -ge 1 && "${alsaver[1]}" -ge 2 && "${alsaver[2]}" -ge 3 ]] ; then
+	if [[ "${alsaver[2]}" -gt 3 || "${alsaver[3]}" -ge 2 ]] ; then 
+		DESC=""
+	fi
+fi
+
 # get device alias from Bluez
 # $1 device dbus object
 get_alias() {
@@ -211,11 +230,11 @@ add_namehint() {
 	ctls["${new_pcm[id]}"]="${new_pcm[addr]//:/}"
 
 	cat >> "$conffile" <<-EOF
-	namehint.pcm.bluealsa${pcms["${new_pcm[id]}"]} "bluealsa:DEV=${new_pcm[addr]},PROFILE=${transport}${srv}|DESC${alias}, ${new_pcm[profile]}${codec}|IOID${io}"
+	namehint.pcm.bluealsa${pcms["${new_pcm[id]}"]} "bluealsa:DEV=${new_pcm[addr]},PROFILE=${transport}${srv}|${DESC}${alias}, ${new_pcm[profile]}${codec}|IOID${io}"
 	EOF
 
 	grep -q "^namehint.ctl.bluealsa${ctls["${new_pcm[id]}"]}" "$conffile" || cat >> "$conffile" <<-EOF
-	namehint.ctl.bluealsa${ctls["${new_pcm[id]}"]} "bluealsa:DEV=${new_pcm[addr]}$srv|DESC${alias} control device"
+	namehint.ctl.bluealsa${ctls["${new_pcm[id]}"]} "bluealsa:DEV=${new_pcm[addr]}$srv|${DESC}${alias} control device"
 	EOF
 
 	[[ "$transport_filter" =~ $transport ]] && [[ "$mode_filter" =~ ${new_pcm[mode]} ]] && defaults+=("$id")
@@ -323,7 +342,7 @@ bluealsa.default.playback.pcm {
 
 bluealsa.default.duplex.pcm "pcm.bluealsa:PROFILE=$profile$srv"
 
-namehint.ctl.bluealsa "bluealsa|DESCBlueALSA global control device"
+namehint.ctl.bluealsa "bluealsa|${DESC}BlueALSA global control device"
 
 EOF
 
