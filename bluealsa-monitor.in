@@ -104,10 +104,14 @@ done
 #	[[ "${version[0]}" -ge 3 ]] && [[ "${version[1]}" -ge 2 ]] && [[ "${version[2]}" -ge 0 ]]
 #}
 
-#if ! $(cli_version_check) ; then
-#	echo "bluealsa-cli version 3.2.0 or later not found - aborting" >&2
-#	exit 1
-#fi
+cli_version_check() {
+	bluealsa-cli --help | grep -q 'list-pcms *\[verbose\]'
+}
+
+if ! $(cli_version_check) ; then
+	echo "bluealsa-cli does not have verbose option - aborting" >&2
+	exit 1
+fi
 
 parse_default() {
 	local IFS=','
