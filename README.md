@@ -6,8 +6,8 @@ https://github.com/Arkq/bluez-alsa
 > __*This is Alpha pre-release code. It requires capabilities of the BlueALSA
 > `bluealsa-cli` utility that are not (currently) available in the upstream
 > bluez-alsa project sources. To obtain the needed version of bluealsa-cli,
-> build BlueALSA from the "cli-verbose" branch of my bluez-alsa fork here:
-> https://github.com/borine/bluez-alsa/tree/cli-verbose*__
+> build BlueALSA from the "scriptability" branch of my bluez-alsa fork here:
+> https://github.com/borine/bluez-alsa/tree/scriptability*__
 
 Applications can open PCM streams to bluetooth devices connected through
 BlueALSA without any need for specific ALSA configuration entries (see
