@@ -4,12 +4,14 @@ prefix = get_option('prefix')
 assert(prefix.startswith('/'), 'Prefix is not absolute: "@0@"'.format(prefix))
 
 bindir = join_paths(prefix, get_option('bindir'))
+statedir = join_paths(prefix, get_option('localstatedir'), 'lib', 'bluealsa-monitor')
 
 systemd = dependency('systemd', required: false)
 
 conf_data = configuration_data()
 conf_data.set('version', meson.project_version())
 conf_data.set('prefix', prefix)
+conf_data.set('statedir', statedir)
 
 configure_file(
 	input : 'bluealsa-monitor.in',
@@ -17,6 +19,16 @@ configure_file(
 	configuration : conf_data,
 	install: true,
 	install_dir: bindir
+)
+
+mytouch = find_program('touch')
+asoundrc = custom_target(
+	'asoundrc',
+	output: 'asoundrc',
+	command : [mytouch,  '@OUTPUT@'],
+	install : true,
+	install_dir: statedir,
+	install_mode: ['rw-rw-r--', 'root', 'audio']
 )
 
 if systemd.found()
