@@ -341,7 +341,7 @@ add_initial_pcms() {
 				set_property "$REPLY"
 				;;
 		esac
-	done <<< $(bluealsa-cli $dbus_arg --quiet list-pcms verbose)
+	done <<< $(bluealsa-cli $dbus_arg --quiet --verbose list-pcms)
 	[[ -n "${new_pcm[id]}" ]] && add_namehint
 	set_default
 	udev_trigger
@@ -416,7 +416,7 @@ if [[ $global = 0 ]] ; then
 fi
 
 # start bluealsa-cli monitor in background
-bluealsa-cli $dbus_arg --quiet monitor verbose >&$MONITOR_FD &
+bluealsa-cli $dbus_arg --quiet --verbose monitor >&$MONITOR_FD &
 
 # load initial set of connected devices
 add_initial_pcms
