@@ -1,17 +1,24 @@
 project('bluealsa-monitor', version: '0.0.1', license: 'Unlicense')
 
+monitor_script = 'bluealsa-monitor'
+
 prefix = get_option('prefix')
 assert(prefix.startswith('/'), 'Prefix is not absolute: "@0@"'.format(prefix))
 
 bindir = join_paths(prefix, get_option('bindir'))
 statedir = join_paths(prefix, get_option('localstatedir'), 'lib', 'bluealsa-monitor')
-
+libdir = join_paths(prefix, get_option('datadir'), 'lib', 'bluealsa-monitor')
+alsa_prefix = run_command('pkg-config', '--variable', 'prefix', 'alsa').stdout().strip()
+alsaconfdir = join_paths(alsa_prefix, 'share', 'alsa', 'alsa.conf.d')
 systemd = dependency('systemd', required: false)
 
 conf_data = configuration_data()
 conf_data.set('version', meson.project_version())
 conf_data.set('prefix', prefix)
+conf_data.set('bindir', bindir)
+conf_data.set('libdir', libdir)
 conf_data.set('statedir', statedir)
+conf_data.set('monitor_script', monitor_script)
 
 configure_file(
 	input : 'bluealsa-monitor.in',
@@ -19,6 +26,36 @@ configure_file(
 	configuration : conf_data,
 	install: true,
 	install_dir: bindir
+)
+
+configure_file(
+	input : 'bluealsa_monitor_funcs.in',
+	output : 'bluealsa_monitor_funcs',
+	configuration : conf_data,
+	install: true,
+	install_dir: libdir
+)
+
+configure_file(
+	input : 'bluealsa_alsaconf.in',
+	output : 'bluealsa_alsaconf',
+	configuration : conf_data,
+	install: true,
+	install_dir: libdir
+)
+
+configure_file(
+	input : 'bluealsa_pulse.in',
+	output : 'bluealsa_pulse',
+	configuration : conf_data,
+	install: true,
+	install_dir: libdir
+)
+
+install_data(
+	'21-bluealsa_raw.conf',
+	install_dir: alsaconfdir,
+	install_mode: ['rw-rw-rw-', 'root', 'root']
 )
 
 mytouch = find_program('touch')

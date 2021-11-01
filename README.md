@@ -22,6 +22,10 @@ disconnect such that those devices appear as PCMs in the namehint API. The
 current version supports only a single running instance of the `bluealsa`
 service.
 
+Optionally, the script can also load BlueALSA PCMs into PulseAudio as devices.
+This enables BlueALSA to be used in conjunction with PulseAudio. It is first
+necessary to disable PulseAudio's own bluetooth modules for this to work.
+
 The script relies on the `bluealsa-cli` utility which is part of the above
 bluez-alsa project. bluez-alsa v3.2.0 or later is required as earlier versions
 of `bluealsa-cli` did not have the needed functions for this script. It is
@@ -159,6 +163,19 @@ raising a udev `change` event on the default sound card; no other permission
 is granted. On systems that do not support `sudo`, alternative means to manage
 privileges will be required.
 
+__-p, --pulse__
+
+Add connected devices to PulseAudio. Takes an optional value, a comma-separated
+list consisting of one or more of the tokens _a2dp_, _sco_, _capture_, _playback_
+to limit the device types that will be used to a particular profile
+(either a2dp or sco) and/or a specific direction (playback or capture).
+The defaukt is to add all connected devices to PulseAudio.
+
+__-i, --icon__
+
+Select a particular icon to be used by PulseAudio for the BlueALSA devices.
+Defaults to _bluetooth_. The available icons will depend on your distribution.
+
 ## systemd
 
 The script can be started and stopped manually using:
@@ -191,7 +208,7 @@ systemctl --user edit bluealsa-monitor.service
 ```
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/bluealsa-monitor --udev --default=a2dp,sink
+ExecStart=/usr/local/bin/bluealsa-monitor --udev --default=a2dp,playback
 ```
 - save and exit from the editor, then restart the service:
 ```shell

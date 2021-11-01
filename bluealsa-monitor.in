@@ -26,56 +26,56 @@
 # For more information, please refer to <https://unlicense.org>
 #
 
-
 # revision @version@
 
-DEFAULT_GLOBAL_CONF_FILE=@statedir@/asoundrc
-DEFAULT_USER_CONF_FILE=$HOME/.asoundrc-bluealsa-monitor
-USER_CONFIG="$HOME/.asoundrc"
+source @libdir@/bluealsa_monitor_funcs || exit 1
+source @libdir@/bluealsa_alsaconf || exit 1
+source @libdir@/bluealsa_pulse || exit 1
 
-ARGS=$(getopt -o Bdfgu: --long dbus:,default::,file:,global,udev,help -n "$0" -- "$@")
+
+bluealsa_print_help() {
+	alsaconf_print_help
+	pulse_print_help
+}
+
+bluealsa_monitor_init() {
+	alsaconf_init
+	[[ "$bluealsa_monitor_enable_pulse" ]] && pulse_init
+}
+
+bluealsa_monitor_start() {
+	alsaconf_start
+}
+
+bluealsa_pcm_added() {
+	alsaconf_pcm_added
+	[[ "$bluealsa_monitor_enable_pulse" ]] && pulse_pcm_added
+}
+
+bluealsa_pcm_removed() {
+	alsaconf_pcm_removed "$1"
+	[[ "$bluealsa_monitor_enable_pulse" ]] && pulse_pcm_removed "$1"
+}
+
+bluealsa_service_stopped() {
+	alsaconf_service_stopped
+	[[ "$bluealsa_monitor_enable_pulse" ]] && pulse_service_stopped
+}
+
+bluealsa_monitor_finished() {
+	alsaconf_finished
+	[[ "$bluealsa_monitor_enable_pulse" ]] && pulse_monitor_finished
+}
+
+
+ARGS=$(getopt -o "B:h${alsaconf_shortopts}${pulse_shortopts}" --long dbus:,help --long "$alsaconf_longopts" --long "$pulse_longopts" -n "$0" -- "$@")
+
 
 [[ $? = 0 ]] || exit 1
 
 eval set -- "$ARGS"
 
 dbus_arg=""
-profile=a2dp
-stream=duplex
-transport_filter=a2dp
-srv=""
-conffile=""
-global=0
-use_udev=0
-use_default=false
-udev_trigger_set=0
-
-declare -A pcms
-declare -A ctls
-declare -A new_pcm
-declare -A Input_defaults
-declare -A Output_defaults
-
-declare -a alsaver
-
-print_help() {
-	cat <<-EOF
-	Usage:
-	  $0 [option ... ]
-
-	Options:
-	  -B,--dbus=     select the bluealsa d-bus suffix
-	  -d,--default   make bluealsa PCM the ALSA default when connected
-	                   - optional arg: [a2dp|sco][,[capture|playback]]
-	                   - default is a2dp, both capture and playback
-	  -f,--file=     absolute path to dynamic ALSA config file
-	                   - default $DEFAULT_USER_CONF_FILE,
-	                     or $DEFAULT_GLOBAL_CONF_FILE
-	                     if --global option set
-	  -g,--global    do not include into users ~/.asoundrc
-	  -u,--udev      emit udev event on device connect and disconnect
-	EOF
-}
 
 while true; do
   case "$1" in
@@ -85,374 +85,39 @@ while true; do
 		shift 2
 		;;
     -f|--file)
-		conffile="$2"
+		alsaconf_conffile="$2"
 		shift 2
 		;;
 	-g|--global)
-		global=1
+		alsaconf_global=1
 		shift
 		;;
     -u|--udev)
-		use_udev=1
+		alsaconf_use_udev=1
 		shift
 		;;
     -d|--default)
-		use_default="a2dp,capture,playback"
-		[[ -n "$2" ]] && use_default="$2"
+		alsaconf_use_default="a2dp,capture,playback"
+		shift
+		[[ -n "$1" ]] && use_default="$1"
+		shift
+		;;
+    -p|--pulse)
+		bluealsa_monitor_enable_pulse=true
+		shift
+		[[ -n "$1" ]] && pulse_types="$1"
+		shift
+		;;
+	-i|--icon)
+		[[ -n "$2" ]] && PULSE_ICON_NAME="$2"
 		shift 2
 		;;
     -h|--help)
-		print_help
+		bluealsa_help
 		exit 0
 		;;
     *) break ;;
   esac
 done
 
-# check for required bluealsa-cli version
-#cli_version_check() {
-#	local cli_version=$(bluealsa-cli --version)
-#	local IFS=.-
-#	local version=( ${cli_version:1} )
-#	[[ "${version[0]}" -ge 3 ]] && [[ "${version[1]}" -ge 2 ]] && [[ "${version[2]}" -ge 0 ]]
-#}
-
-cli_version_check() {
-	bluealsa-cli --help | grep -q 'list-pcms *\[verbose\]'
-}
-
-if ! $(cli_version_check) ; then
-	echo "bluealsa-cli does not have verbose option - aborting" >&2
-	exit 1
-fi
-
-parse_default() {
-	local IFS=','
-	local temp=( $use_default )
-	local word capture playback a2dp sco
-	for word in "${temp[@]}"; do
-		case "$word" in
-			'capture') capture=1 ;;
-			'playback') playback=1 ;;
-			'a2dp') a2dp=1 ;;
-			'sco') sco=1 ;;
-			*) 
-				echo "Invalid --default argument '$word'" >&2
-				exit 1
-				;;
-		esac
-	done
-	[[ "$capture" = 1 ]] && { mode_filter=source ; stream=capture ; }
-	[[ "$playback" = 1 ]] && { mode_filter=sink ; stream=playback ; }
-	[[ "$capture" = 1 && "$playback" = 1 ]] && { mode_filter=sinksource; stream=duplex ; }
-	[[ "$a2dp" = 1 ]] && profile=a2dp && transport_filter=a2dp
-	[[ "$sco" = 1 ]] && profile=sco && transport_filter=sco
-	if [[ "$a2dp" = 1 && "$sco" = 1 ]] ; then
-		echo "Default cannot be both a2dp and sco" >&2
-		exit 1;
-	fi
-}
-
-[[ "$use_default" = false ]] || parse_default
-
-if [[ -z "$conffile" ]] ; then
-	if [[ $global = 0 ]] ; then
-		conffile=$DEFAULT_USER_CONF_FILE
-	else
-		conffile=$DEFAULT_GLOBAL_CONF_FILE
-	fi
-fi 
-
-# get alsa installed version
-get_alsaver() {
-	alsa_ver_str=$(aplay --version)
-	alsa_ver_str=${alsa_ver_str% by*}
-	alsa_ver_str=${alsa_ver_str#*version }
-	local IFS=.
-	alsaver=( $alsa_ver_str )
-}
-
-# For libasound version < 1.2.3.2, we need to include the tag "DESC" in a namehint
-DESC="DESC"
-get_alsaver
-if [[ "${alsaver[0]}" -ge 1 && "${alsaver[1]}" -ge 2 && "${alsaver[2]}" -ge 3 ]] ; then
-	if [[ "${alsaver[2]}" -gt 3 || "${alsaver[3]}" -ge 2 ]] ; then 
-		DESC=""
-	fi
-fi
-
-# get device alias from Bluez
-# $1 device dbus object
-get_alias() {
-	alias=$(dbus-send --print-reply=literal --system --dest=org.bluez "$1" \
-	    org.freedesktop.DBus.Properties.Get \
-		string:"org.bluez.Device1" string:"Alias")
-	alias="${alias#   variant       }"
-}
-
-# store a pcm property into the global new_pcm array
-# $1 the property as printed by bluealsa-cli
-set_property() {
-	local temp
-	case "$1" in
-		Device*)
-			new_pcm[device]="${1#Device: }"
-			;;
-		Sequence*)
-			new_pcm[sequence]="${1#Sequence: }"
-			;;
-		Transport*)
-			temp="${1#Transport: }"
-			case "$temp" in
-				A2DP*)
-					new_pcm[profile]=A2DP
-					;;
-				HFP*)
-					new_pcm[profile]=HFP
-					;;
-				HSP*)
-					new_pcm[profile]=HSP
-					;;
-			esac
-			;;
-		Mode*)
-			new_pcm[mode]="${1#Mode: }"
-			;;
-		Format*)
-			new_pcm[format]="${1#Format: }"
-			;;
-		Channels*)
-			new_pcm[channels]="${1#Channels: }"
-			;;
-		Sampling*)
-			temp="${1#Sampling: }"
-			new_pcm[rate]="${temp% Hz}"
-			;;
-		"Selected codec"*)
-			new_pcm[codec]="${1#Selected codec: }"
-			;;
-	esac
-}
-
-# create namehints for pcm and ctl, write them to the config
-# also adds the pcm to global defaults arrays if appropriate 
-# reads data from the global new_pcm array
-add_namehint() {
-	local alias
-	get_alias "${new_pcm[device]}"
-	[[ -n "$alias" ]] || return
-
-	local io=Output
-	[[ "${new_pcm[mode]}" = source ]] && io=Input
-
-	local transport="${new_pcm[profile],,}"
-	[[ "$transport" = a2dp ]] || transport=sco
-
-	local codec
-	[[ ${new_pcm[codec]} = "<null>" ]] || codec=" (${new_pcm[codec]})"
-
-	pcms["${new_pcm[id]}"]="${new_pcm[addr]//:/}$transport$io"
-	ctls["${new_pcm[id]}"]="${new_pcm[addr]//:/}"
-
-	cat >> "$conffile" <<-EOF
-	namehint.pcm.bluealsa${pcms["${new_pcm[id]}"]} "bluealsa:DEV=${new_pcm[addr]},PROFILE=${transport}${srv}|${DESC}${alias}, ${new_pcm[profile]}${codec}|IOID${io}"
-	EOF
-
-	grep -q "^namehint.ctl.bluealsa${ctls["${new_pcm[id]}"]}" "$conffile" || cat >> "$conffile" <<-EOF
-	namehint.ctl.bluealsa${ctls["${new_pcm[id]}"]} "bluealsa:DEV=${new_pcm[addr]}$srv|${DESC}${alias} control device"
-	EOF
-
-	if [[ "$transport_filter" =~ $transport && "$mode_filter" =~ ${new_pcm[mode]} ]]
-	then
-		if [[ ${io} = Input ]] ; then
-			Input_defaults["${new_pcm[id]}"]="${new_pcm[id]}"
-		else
-			Output_defaults["${new_pcm[id]}"]="${new_pcm[id]}"
-		fi
-	fi
-
-}
-
-# remove namehint from the config
-# also removes pcm from the global defaults
-# $1 the id of the pcm to be removed 
-remove_namehint() {
-	sed -i '/^namehint.pcm.bluealsa'${pcms["$1"]}'/,+1d' "$conffile"
-	[[ -n "${ctls["$1"]}" ]] && sed -i '/^namehint.ctl.bluealsa'${ctls["$1"]}'/,+1d' "$conffile"
-	if [[ pcms["$1"] == *Input ]] ; then
-		unset Input_defaults["$1"]
-	else
-		unset Output_defaults["$1"]
-	fi
-	unset pcms["$1"]
-	unset ctls["$1"]
-}
-
-# update the config pcm.!default entry if necessary
-set_default() {
-	[[ "$use_default" = false ]] && return
-
-	local stream
-	[[ "${#Input_defaults[@]}" -gt 0 ]] && stream=capture
-	[[ "${#Output_defaults[@]}" -gt 0 ]] && {
-		if [[ -z "$stream" ]] ; then
-			stream=playback
-		else
-			stream=duplex
-		fi
-	}
-
-	sed -i '/^pcm.!default/d' "$conffile" 2>/dev/null
-	[[ -n "$stream" ]] && echo 'pcm.!default "bluealsa.default.'"$stream"'.pcm"' >> "$conffile"
-}
-
-# generate synthetic udev event
-udev_action() {
-	echo "UdevTrigger" >&$MONITOR_FD
-	sudo -n /bin/udevadm trigger --action=change /dev/snd/controlC0
-}
-
-# trigger a udev soundcard event
-# delay the action for a short time to avoid multiple events for a device
-# that supports multiple PCMs
-udev_trigger() {
-	[[ "$use_udev" = 1 ]] || return
-	[[ "$udev_trigger_set" = 0 ]] || return
-	udev_trigger_set=1
-	{ sleep 0.5 ; udev_action ; } &
-}
-
-# get connected PCMs and create namehints for them
-# also update config pcm.!default entry and generate udev event
-# uses global new_pcm array to pass data to new_pcm() function
-add_initial_pcms() {
-	local addr
-	while read; do
-		case "$REPLY" in
-			/*)
-				[[ -n "${new_pcm[id]}" ]] && add_namehint
-				new_pcm=()
-				new_pcm[id]=${REPLY}
-				addr=${REPLY#*dev_}
-				addr=${addr%%/*}
-				new_pcm[addr]=${addr//_/:}
-				;;
-			*)
-				set_property "$REPLY"
-				;;
-		esac
-	done <<< $(bluealsa-cli $dbus_arg --quiet --verbose list-pcms)
-	[[ -n "${new_pcm[id]}" ]] && add_namehint
-	set_default
-	udev_trigger
-}
-
-# remove all pcms if bluealsa service terminates
-handle_service_stopped_event() {
-	for item in "${!pcms[@]}" ; do
-		remove_namehint "$item"
-	done
-	sed -i '/^pcm.!default/d' "$conffile" 2>/dev/null
-	[[ "$use_default" = false ]] || sed -i '/^pcm.!default/d' "$conffile" 2>/dev/null
-	udev_trigger
-}
-
-# clean up before exit
-finished() {
-	handle_service_stopped_event
-	[[ $global = 0 ]] && sed -i '/^<'${conffile//\//\\/}'>$/d' "$USER_CONFIG"
-}
-
-# delete all stale entries from alsa config file
-cat  > "$conffile" <<EOF
-# DO NOT EDIT - automatically managed by bluealsa-monitor service
-bluealsa.default.capture.pcm {
-	type asym
-	capture.pcm "pcm.bluealsa:PROFILE=$profile$srv"
-	playback.pcm {
-		@func refer
-		name "bluealsa.default.playback.fallback"
-		default sysdefault
-	}
-	hint.show on
-	hint.description "Capture: Bluetooth default, Playback: sysdefault"
-}
-bluealsa.default.playback.pcm {
-	type asym
-	capture.pcm {
-		@func refer
-		name "bluealsa.default.capture.fallback"
-		default sysdefault
-	}
-	playback.pcm "pcm.bluealsa:PROFILE=$profile$srv"
-	hint.show on
-	hint.description "Capture: sysdefault, Playback: Bluetooth default"
-}
-bluealsa.default.duplex.pcm {
-	type empty
-	slave.pcm "pcm.bluealsa:PROFILE=$profile$srv"
-	hint.show on
-	hint.description "Bluetooth default"
-}
-namehint.ctl.bluealsa "bluealsa|${DESC}BlueALSA global control device"
-
-EOF
-
-# create a temporary fifo to communicate with dbus monitor
-FIFO=$(mktemp -u)
-mkfifo $FIFO
-# attach it to unused file descriptor FD
-exec {MONITOR_FD}<>$FIFO
-# unlink the named pipe
-rm $FIFO
-
-# make sure the pipeline is shut down if this script is interrupted
-trap "kill %1; finished; exec {MONITOR_FD}>&-; exit 0" INT TERM
-
-# include bluealsa config into user config
-if [[ $global = 0 ]] ; then
-	[[ -f "$USER_CONFIG" ]] || touch "$USER_CONFIG"
-	grep -q "^<$conffile>" "$USER_CONFIG" || printf "%s\n" "<$conffile>" >> "$USER_CONFIG"
-fi
-
-# start bluealsa-cli monitor in background
-bluealsa-cli $dbus_arg --quiet --verbose monitor >&$MONITOR_FD &
-
-# load initial set of connected devices
-add_initial_pcms
-
-# now listen for dbus signals
-while read -u $MONITOR_FD
-do
-	case "$REPLY" in
-		PCMAdded*)
-			new_pcm=()
-			new_pcm[id]=${REPLY#PCMAdded }
-			addr=${REPLY#*dev_}
-			addr=${addr%%/*}
-			new_pcm[addr]=${addr//_/:}
-			;;
-		"")
-			add_namehint
-			set_default
-			udev_trigger
-			new_pcm=()
-			;;
-		PCMRemoved*)
-			new_pcm=()
-			remove_namehint "${REPLY#PCMRemoved }"
-			set_default
-			udev_trigger
-			;;
-		ServiceStopped*)
-			new_pcm=()
-			handle_service_stopped_event
-			;;
-		UdevTrigger)
-			udev_trigger_set=0
-			;;
-		*)
-			set_property "$REPLY"
-			;;
-	esac
-done
+bluealsa_monitor

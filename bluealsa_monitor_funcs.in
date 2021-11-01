@@ -1,0 +1,265 @@
+# BlueALSA bash helper functions
+
+# This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# For more information, please refer to <https://unlicense.org>
+#
+
+# revision @version@
+
+declare -A bluealsa_new_pcm
+_bluealsa_monitor_stop=0
+
+# check that bluealsa-cli supports the "--version" option
+_bluealsa_cli_version_check() {
+	bluealsa-cli --verbose list-services &>/dev/null
+}
+
+# store a pcm property into the global bluealsa_new_pcm array
+# $1 the property as printed by bluealsa-cli
+_bluealsa_set_property() {
+	local temp
+	case "$1" in
+		Device*)
+			bluealsa_new_pcm[device]="${1#Device: }"
+			;;
+		Sequence*)
+			bluealsa_new_pcm[sequence]="${1#Sequence: }"
+			;;
+		Transport*)
+			temp="${1#Transport: }"
+			case "$temp" in
+				A2DP*)
+					bluealsa_new_pcm[profile]=A2DP
+					;;
+				HFP*)
+					bluealsa_new_pcm[profile]=HFP
+					;;
+				HSP*)
+					bluealsa_new_pcm[profile]=HSP
+					;;
+			esac
+			;;
+		Mode*)
+			bluealsa_new_pcm[mode]="${1#Mode: }"
+			;;
+		Format*)
+			bluealsa_new_pcm[format]="${1#Format: }"
+			;;
+		Channels*)
+			bluealsa_new_pcm[channels]="${1#Channels: }"
+			;;
+		Sampling*)
+			temp="${1#Sampling: }"
+			bluealsa_new_pcm[rate]="${temp% Hz}"
+			;;
+		"Selected codec"*)
+			bluealsa_new_pcm[codec]="${1#Selected codec: }"
+			;;
+	esac
+}
+
+# get connected PCMs
+# uses global new_pcm array to pass data to bluealsa_new_pcm() function
+_bluealsa_add_initial_pcms() {
+	[[ $(type -t bluealsa_pcm_added) == function ]] || {
+		echo "Function bluealsa_pcm_added not defined" >&2
+		return 1
+	}
+
+	local addr
+	local REPLY
+	while read; do
+		case "$REPLY" in
+			/*)
+				[[ -n "${bluealsa_new_pcm[id]}" ]] && _bluealsa_pcm_added
+				bluealsa_new_pcm=()
+				bluealsa_new_pcm[id]=${REPLY}
+				addr=${REPLY#*dev_}
+				addr=${addr%%/*}
+				bluealsa_new_pcm[addr]=${addr//_/:}
+				;;
+			*)
+				_bluealsa_set_property "$REPLY"
+				;;
+		esac
+	done <<< $(bluealsa-cli $dbus_arg --quiet --verbose list-pcms)
+	[[ -n "${bluealsa_new_pcm[id]}" ]] && _bluealsa_pcm_added
+}
+
+_bluealsa_monitor_init() {
+	[[ $(type -t bluealsa_monitor_init) == function ]] && {
+		bluealsa_monitor_init
+	}
+}
+
+_bluealsa_monitor_start() {
+	[[ $(type -t bluealsa_monitor_start) == function ]] && {
+		bluealsa_monitor_start
+	}
+}
+
+_bluealsa_pcm_added() {
+	bluealsa_new_pcm[alias]=$(bluealsa_get_alias "${bluealsa_new_pcm[device]}")
+	[[ "${bluealsa_new_pcm[alias]}" ]] || return
+	bluealsa_pcm_added
+}
+
+_bluealsa_handle_service_started() {
+	[[ $(type -t bluealsa_service_started) == function ]] && {
+		bluealsa_service_started
+	}
+}
+
+_bluealsa_handle_service_stopped() {
+	[[ $(type -t bluealsa_service_stopped) == function ]] && {
+		bluealsa_service_stopped
+	}
+}
+
+_bluealsa_handle_internal_event() {
+	[[ $(type -t bluealsa_handle_internal_event) == function ]] && {
+		bluealsa_handle_internal_event "$1"
+	}
+}
+
+_bluealsa_monitor_finished() {
+	[[ $(type -t bluealsa_monitor_finished) == function ]] && {
+		bluealsa_monitor_finished
+	}
+	_bluealsa_monitor_stop=1
+}
+
+_bluealsa_print_help() {
+	[[ $(type -t bluealsa_print_help) == function ]] && {
+		bluealsa_print_help
+	}
+}
+
+################################################################################
+#
+# Public functions
+#
+################################################################################
+
+bluealsa_help() {
+	cat <<-EOF
+	Usage:
+	  $0 [option ... ]
+
+	Options:
+	  -B,--dbus=     select the bluealsa d-bus suffix
+	EOF
+
+	_bluealsa_print_help
+}
+
+# print device alias from Bluez to stdout
+# $1 device dbus object path
+bluealsa_get_alias() {
+	local alias=$(dbus-send --print-reply=literal --system --dest=org.bluez "$1" \
+	    org.freedesktop.DBus.Properties.Get \
+		string:"org.bluez.Device1" string:"Alias")
+	printf "%s" "${alias#   variant       }"
+}
+
+# Generate an internal event
+bluealsa_internal_event() {
+	[[ $# = 1 ]] || return 
+	printf "MonitorInternal %s\n" "$1" >&$_bluealsa_monitor_fd
+}
+
+# $1 - optional bluealsa dbus suffix
+bluealsa_monitor() {
+
+	$(_bluealsa_cli_version_check) || {
+		echo "bluealsa-cli version 3.2.0 or later not found" >&2
+		return 1
+	}
+
+	[[ $(type -t bluealsa_pcm_added) == function ]] || {
+		echo "Function bluealsa_pcm_added not defined" >&2
+		return 1
+	}
+
+	[[ $(type -t bluealsa_pcm_removed) == function ]] || {
+		echo "Function bluealsa_pcm_removed not defined" >&2
+		return 1
+	}
+
+	_bluealsa_monitor_init
+
+	local dbus_arg=""
+	[[ -n "$1" ]] && dbus_arg="--dbus=$1"
+	local fifo=$(mktemp -u)
+	mkfifo $fifo
+	exec {_bluealsa_monitor_fd}<>$fifo
+	rm $fifo
+
+	local cli_pid
+	bluealsa-cli $dbus_arg --quiet --verbose monitor >&$_bluealsa_monitor_fd &
+	cli_pid=$!
+	trap "kill $cli_pid; _bluealsa_monitor_finished; exec {_bluealsa_monitor_fd}>&-" INT TERM
+
+	_bluealsa_add_initial_pcms
+
+	_bluealsa_monitor_start
+
+	unset _bluealsa_monitor_stop
+	local REPLY addr
+	while [[ -z "$_bluealsa_monitor_stop" ]] && read -u $_bluealsa_monitor_fd 2>/dev/null
+	do
+		case "$REPLY" in
+			PCMAdded*)
+				bluealsa_new_pcm=()
+				bluealsa_new_pcm[id]=${REPLY#PCMAdded }
+				addr=${REPLY#*dev_}
+				addr=${addr%%/*}
+				bluealsa_new_pcm[addr]=${addr//_/:}
+				;;
+			"")
+				_bluealsa_pcm_added
+				bluealsa_new_pcm=()
+				;;
+			PCMRemoved*)
+				bluealsa_new_pcm=()
+				bluealsa_pcm_removed "${REPLY#PCMRemoved }"
+				;;
+			ServiceRunning*)
+				bluealsa_new_pcm=()
+				_bluealsa_handle_service_started
+				;;
+			ServiceStopped*)
+				bluealsa_new_pcm=()
+				_bluealsa_handle_service_stopped
+				;;
+			MonitorInternal*)
+				_bluealsa_handle_internal_event "${REPLY#MonitorInternal }"
+				;;
+			*)
+				_bluealsa_set_property "$REPLY"
+				;;
+		esac
+	done
+}

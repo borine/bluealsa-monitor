@@ -1,0 +1,293 @@
+# This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# For more information, please refer to <https://unlicense.org>
+#
+
+# revision @version@
+
+ALSACONF_DEFAULT_GLOBAL_CONF_FILE=@statedir@/asoundrc
+ALSACONF_DEFAULT_USER_CONF_FILE=$HOME/.asoundrc-bluealsa
+ALSACONF_USER_CONFIG="$HOME/.asoundrc"
+
+alsaconf_profile=a2dp
+alsaconf_stream=duplex
+alsaconf_transport_filter=a2dp
+alsaconf_srv=""
+alsaconf_conffile=""
+alsaconf_global=0
+alsaconf_use_udev=0
+alsaconf_use_default=false
+alsaconf_udev_trigger_set=0
+
+
+declare -A alsaconf_pcms
+declare -A alsaconf_ctls
+declare -A alsaconf_Input_defaults
+declare -A alsaconf_Output_defaults
+
+declare -a alsaconf_alsaver
+
+alsaconf_shortopts="d::f:gu"
+alsaconf_longopts="default::,file:,global,udev"
+
+alsaconf_print_help() {
+	cat <<-EOF
+	  -d,--default   make bluealsa PCM the ALSA default when connected
+	                   - optional arg: [a2dp|sco][,[capture|playback]]
+	                   - default is a2dp, both capture and playback
+	  -f,--file=     absolute path to dynamic ALSA config file
+	                   - default $ALSACONF_DEFAULT_USER_CONF_FILE,
+	                     or $ALSACONF_DEFAULT_GLOBAL_CONF_FILE
+	                     if --global option set
+	  -g,--global    do not include into users ~/.asoundrc
+	  -u,--udev      emit udev event on device connect and disconnect
+	EOF
+}
+
+alsaconf_parse_default() {
+	local IFS=','
+	local temp=( $alsaconf_use_default )
+	local word capture playback a2dp sco
+	for word in "${temp[@]}"; do
+		case "$word" in
+			'capture') capture=1 ;;
+			'playback') playback=1 ;;
+			'a2dp') a2dp=1 ;;
+			'sco') sco=1 ;;
+			*) 
+				echo "Invalid --default argument '$word'" >&2
+				exit 1
+				;;
+		esac
+	done
+	[[ "$capture" = 1 ]] && { alsaconf_mode_filter=source ; alsaconf_stream=capture ; }
+	[[ "$playback" = 1 ]] && { alsaconf_mode_filter=sink ; alsaconf_stream=playback ; }
+	[[ "$capture" = 1 && "$playback" = 1 ]] && { alsaconf_mode_filter=sinksource; alsaconf_stream=duplex ; }
+	[[ "$a2dp" = 1 ]] && alsaconf_profile=a2dp && alsaconf_transport_filter=a2dp
+	[[ "$sco" = 1 ]] && alsaconf_profile=sco && alsaconf_transport_filter=sco
+	if [[ "$a2dp" = 1 && "$sco" = 1 ]] ; then
+		echo "Default cannot be both a2dp and sco" >&2
+		exit 1;
+	fi
+}
+
+# get alsa installed version
+alsaconf_get_alsaver() {
+	local alsa_ver_str=$(aplay --version)
+	alsa_ver_str=${alsa_ver_str% by*}
+	alsa_ver_str=${alsa_ver_str#*version }
+	local IFS=.
+	alsaconf_alsaver=( $alsa_ver_str )
+}
+
+# delete all stale entries from alsa config file
+alsaconf_init_config() {
+	cat  > "$alsaconf_conffile" <<-EOF
+	# DO NOT EDIT - automatically managed by bluealsa-monitor service
+	bluealsa.default.capture.pcm {
+		type asym
+		capture.pcm "pcm.bluealsa:PROFILE=$alsaconf_profile$alsaconf_srv"
+		playback.pcm {
+			@func refer
+			name "bluealsa.default.playback.fallback"
+			default sysdefault
+		}
+		hint.show on
+		hint.description "Capture: Bluetooth default, Playback: sysdefault"
+	}
+	bluealsa.default.playback.pcm {
+		type asym
+		capture.pcm {
+			@func refer
+			name "bluealsa.default.capture.fallback"
+			default sysdefault
+		}
+		playback.pcm "pcm.bluealsa:PROFILE=$alsaconf_profile$alsaconf_srv"
+		hint.show on
+		hint.description "Capture: sysdefault, Playback: Bluetooth default"
+	}
+	bluealsa.default.duplex.pcm {
+		type empty
+		slave.pcm "pcm.bluealsa:PROFILE=$alsaconf_profile$alsaconf_srv"
+		hint.show on
+		hint.description "Bluetooth default"
+	}
+	namehint.ctl.bluealsa "bluealsa|${alsaconf_DESC}BlueALSA global control device"
+
+	EOF
+}
+
+# generate synthetic udev event
+alsaconf_udev_action() {
+	bluealsa_internal_event UdevTrigger
+	sudo -n /bin/udevadm trigger --action=change /dev/snd/controlC0
+}
+
+# trigger a udev soundcard event
+# delay the action for a short time to avoid multiple events for a device
+# that supports multiple PCMs
+alsaconf_udev_trigger() {
+	[[ "$alsaconf_use_udev" = 1 ]] || return
+	[[ "$alsaconf_udev_trigger_set" = 0 ]] || return
+	alsaconf_udev_trigger_set=1
+	{ sleep 0.5 ; alsaconf_udev_action ; } &
+}
+
+alsaconf_init() {
+	alsaconf_running=
+
+	[[ "$alsaconf_use_default" = false ]] || alsaconf_parse_default
+
+	if [[ -z "$alsaconf_conffile" ]] ; then
+		if [[ $alsaconf_global = 0 ]] ; then
+			alsaconf_conffile=$ALSACONF_DEFAULT_USER_CONF_FILE
+		else
+			alsaconf_conffile=$ALSACONF_DEFAULT_GLOBAL_CONF_FILE
+		fi
+	fi
+
+	# For libasound version < 1.2.3.2, we need to include the tag "DESC" in a namehint
+	alsaconf_DESC="DESC"
+	alsaconf_get_alsaver
+	if [[ "${alsaconf_alsaver[0]}" -ge 1 && "${alsaconf_alsaver[1]}" -ge 2 && "${alsaconf_alsaver[2]}" -ge 3 ]] ; then
+		if [[ "${alsaconf_alsaver[2]}" -gt 3 || "${alsaconf_alsaver[3]}" -ge 2 ]] ; then 
+			alsaconf_DESC=""
+		fi
+	fi
+
+	# include bluealsa config into user config
+	if [[ $alsaconf_global = 0 ]] ; then
+		[[ -f "$ALSACONF_USER_CONFIG" ]] || touch "$ALSACONF_USER_CONFIG"
+		grep -q "^<$alsaconf_conffile>" "$ALSACONF_USER_CONFIG" || printf "%s\n" "<$alsaconf_conffile>" >> "$ALSACONF_USER_CONFIG"
+	fi
+
+	alsaconf_init_config
+}
+
+# create namehints for pcm and ctl, write them to the config
+# also adds the pcm to global defaults arrays if appropriate 
+# reads data from the global bluealsa_new_pcm array
+alsaconf_add_namehint() {
+	local alias=${bluealsa_new_pcm[alias]}
+
+	local io=Output
+	[[ "${bluealsa_new_pcm[mode]}" = source ]] && io=Input
+
+	local transport="${bluealsa_new_pcm[profile],,}"
+	[[ "$transport" = a2dp ]] || transport=sco
+
+	local codec
+	[[ ${bluealsa_new_pcm[codec]} = "<null>" ]] || codec=" (${bluealsa_new_pcm[codec]})"
+
+	alsaconf_pcms["${bluealsa_new_pcm[id]}"]="${bluealsa_new_pcm[addr]//:/}$transport$io"
+	alsaconf_ctls["${bluealsa_new_pcm[id]}"]="${bluealsa_new_pcm[addr]//:/}"
+
+	cat >> "$alsaconf_conffile" <<-EOF
+	namehint.pcm.bluealsa${alsaconf_pcms["${bluealsa_new_pcm[id]}"]} "bluealsa:DEV=${bluealsa_new_pcm[addr]},PROFILE=${transport}${alsaconf_srv}|${alsaconf_DESC}${alias}, ${bluealsa_new_pcm[profile]}${codec}|IOID${io}"
+	EOF
+
+	grep -q "^namehint.ctl.bluealsa${alsaconf_ctls["${bluealsa_new_pcm[id]}"]}" "$alsaconf_conffile" || cat >> "$alsaconf_conffile" <<-EOF
+	namehint.ctl.bluealsa${alsaconf_ctls["${bluealsa_new_pcm[id]}"]} "bluealsa:DEV=${bluealsa_new_pcm[addr]}$alsaconf_srv|${alsaconf_DESC}${alias} control device"
+	EOF
+
+	if [[ "$alsaconf_transport_filter" =~ $transport && "$alsaconf_mode_filter" =~ ${bluealsa_new_pcm[mode]} ]]
+	then
+		if [[ ${io} = Input ]] ; then
+			alsaconf_Input_defaults["${bluealsa_new_pcm[id]}"]="${bluealsa_new_pcm[id]}"
+		else
+			alsaconf_Output_defaults["${bluealsa_new_pcm[id]}"]="${bluealsa_new_pcm[id]}"
+		fi
+	fi
+}
+
+# remove namehint from the config
+# also removes pcm from the global defaults
+# $1 the id of the pcm to be removed 
+alsaconf_remove_namehint() {
+	sed -i '/^namehint.pcm.bluealsa'${alsaconf_pcms["$1"]}'/,+1d' "$alsaconf_conffile"
+	[[ -n "${alsaconf_ctls["$1"]}" ]] && sed -i '/^namehint.ctl.bluealsa'${alsaconf_ctls["$1"]}'/,+1d' "$alsaconf_conffile"
+	if [[ alsaconf_pcms["$1"] == *Input ]] ; then
+		unset alsaconf_Input_defaults["$1"]
+	else
+		unset alsaconf_Output_defaults["$1"]
+	fi
+	unset alsaconf_pcms["$1"]
+	unset alsaconf_ctls["$1"]
+}
+
+# update the config pcm.!default entry if necessary
+alsaconf_set_default() {
+	[[ "$alsaconf_use_default" = false ]] && return
+
+	local stream
+	[[ "${#alsaconf_Input_defaults[@]}" -gt 0 ]] && stream=capture
+	[[ "${#alsaconf_Output_defaults[@]}" -gt 0 ]] && {
+		if [[ -z "$stream" ]] ; then
+			stream=playback
+		else
+			stream=duplex
+		fi
+	}
+
+	sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null
+	[[ -n "$stream" ]] && echo 'pcm.!default "bluealsa.default.'"$stream"'.pcm"' >> "$alsaconf_conffile"
+}
+
+alsaconf_start() {
+	alsaconf_running=true
+	alsaconf_set_default
+	alsaconf_udev_trigger
+}
+
+alsaconf_pcm_added() {
+	alsaconf_add_namehint
+	[[ $alsaconf_running ]] && {
+		alsaconf_set_default
+		alsaconf_udev_trigger
+	}
+}
+
+alsaconf_pcm_removed() {
+	alsaconf_remove_namehint "$1"
+	alsaconf_set_default
+	alsaconf_udev_trigger
+}
+
+alsaconf_service_stopped() {
+	for item in "${!alsaconf_pcms[@]}" ; do
+		remove_namehint "$item"
+	done
+	sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null
+	[[ "$alsaconf_use_default" = false ]] || sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null
+	alsaconf_udev_trigger
+}
+
+alsaconf_handle_internal_event() {
+	[[ "$1" = UdevTrigger ]] && alsaconf_udev_trigger_set=0
+}
+
+alsaconf_finished() {
+	alsaconf_service_stopped
+	[[ $alsaconf_global = 0 ]] && sed -i '/^<'${alsaconf_conffile//\//\\/}'>$/d' "$ALSACONF_USER_CONFIG"
+}
