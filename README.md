@@ -9,7 +9,7 @@ https://github.com/Arkq/bluez-alsa
 
 Applications can open PCM streams to bluetooth devices connected through
 BlueALSA without any need for specific ALSA configuration entries (see
-https://github.com/Arkq/bluez-alsa/wiki/Using-the-bluealsa-ALSA-pcm-plugin).
+https://github.com/Arkq/bluez-alsa/blob/master/doc/bluealsa-plugins.7.rst).
 However, there is no equivalent way for an ALSA application to obtain
 a list of available bluetooth PCMs. For command-line users, the utility
 `bluealsa-aplay` will produce such a list, but for GUI applications we
