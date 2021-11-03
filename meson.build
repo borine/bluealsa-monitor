@@ -7,7 +7,7 @@ assert(prefix.startswith('/'), 'Prefix is not absolute: "@0@"'.format(prefix))
 
 bindir = join_paths(prefix, get_option('bindir'))
 statedir = join_paths(prefix, get_option('localstatedir'), 'lib', 'bluealsa-monitor')
-libdir = join_paths(prefix, get_option('datadir'), 'lib', 'bluealsa-monitor')
+libdir = join_paths(prefix, get_option('datadir'), 'bluealsa-monitor')
 alsa_prefix = run_command('pkg-config', '--variable', 'prefix', 'alsa').stdout().strip()
 alsaconfdir = join_paths(alsa_prefix, 'share', 'alsa', 'alsa.conf.d')
 systemd = dependency('systemd', required: false)
@@ -29,24 +29,24 @@ configure_file(
 )
 
 configure_file(
-	input : 'bluealsa_monitor_funcs.in',
-	output : 'bluealsa_monitor_funcs',
+	input : 'monitor-funcs.in',
+	output : 'monitor-funcs',
 	configuration : conf_data,
 	install: true,
 	install_dir: libdir
 )
 
 configure_file(
-	input : 'bluealsa_alsaconf.in',
-	output : 'bluealsa_alsaconf',
+	input : 'alsaconf.in',
+	output : 'alsaconf',
 	configuration : conf_data,
 	install: true,
 	install_dir: libdir
 )
 
 configure_file(
-	input : 'bluealsa_pulse.in',
-	output : 'bluealsa_pulse',
+	input : 'pulse.in',
+	output : 'pulse',
 	configuration : conf_data,
 	install: true,
 	install_dir: libdir

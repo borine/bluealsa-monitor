@@ -28,6 +28,26 @@
 
 # revision @version@
 
+_bluealsa_monitor_shortopts="B:hv"
+_bluealsa_monitor_longopts="dbus:,help,version"
+
+for _bluealsa_module in $bluealsa_monitor_modules; do
+	source @libdir@/$_bluealsa_module || {
+		echo "No such module: @libdir@/$_bluealsa_module"
+		exit 1
+	}
+	_shortopts="${_bluealsa_module}_shortopts"
+	_longopts="${_bluealsa_module}_longopts"
+	_bluealsa_monitor_shortopts="${_bluealsa_monitor_shortopts}${!_shortopts}"
+	[[ "$_longopts" ]] && _bluealsa_monitor_longopts="${_bluealsa_monitor_longopts},${!_longopts}"
+done
+
+ARGS=$(getopt -o "$_bluealsa_monitor_shortopts" --long "${_bluealsa_monitor_longopts}" -n "$0" -- "$@")
+
+[[ $? = 0 ]] || exit 1
+
+eval set -- "$ARGS"
+
 declare -A bluealsa_new_pcm
 _bluealsa_monitor_stop=0
 
@@ -80,14 +100,23 @@ _bluealsa_set_property() {
 	esac
 }
 
+_bluealsa_monitor_call() {
+	local _func=$1
+	shift
+	for _bluealsa_module in $bluealsa_monitor_modules; do
+		[[ $(type -t ${_bluealsa_module}_$_func) == function ]] && ${_bluealsa_module}_$_func "$@"
+	done
+}
+
+_bluealsa_pcm_added() {
+	bluealsa_new_pcm[alias]=$(bluealsa_get_alias "${bluealsa_new_pcm[device]}")
+	[[ "${bluealsa_new_pcm[alias]}" ]] || return
+	_bluealsa_monitor_call pcm_added
+}
+
 # get connected PCMs
 # uses global new_pcm array to pass data to bluealsa_new_pcm() function
 _bluealsa_add_initial_pcms() {
-	[[ $(type -t bluealsa_pcm_added) == function ]] || {
-		echo "Function bluealsa_pcm_added not defined" >&2
-		return 1
-	}
-
 	local addr
 	local REPLY
 	while read; do
@@ -104,57 +133,50 @@ _bluealsa_add_initial_pcms() {
 				_bluealsa_set_property "$REPLY"
 				;;
 		esac
-	done <<< $(bluealsa-cli $dbus_arg --quiet --verbose list-pcms)
+	done <<< $(bluealsa-cli $_bluealsa_dbus_arg --quiet --verbose list-pcms)
 	[[ -n "${bluealsa_new_pcm[id]}" ]] && _bluealsa_pcm_added
 }
 
-_bluealsa_monitor_init() {
-	[[ $(type -t bluealsa_monitor_init) == function ]] && {
-		bluealsa_monitor_init
-	}
-}
-
-_bluealsa_monitor_start() {
-	[[ $(type -t bluealsa_monitor_start) == function ]] && {
-		bluealsa_monitor_start
-	}
-}
-
-_bluealsa_pcm_added() {
-	bluealsa_new_pcm[alias]=$(bluealsa_get_alias "${bluealsa_new_pcm[device]}")
-	[[ "${bluealsa_new_pcm[alias]}" ]] || return
-	bluealsa_pcm_added
-}
-
-_bluealsa_handle_service_started() {
-	[[ $(type -t bluealsa_service_started) == function ]] && {
-		bluealsa_service_started
-	}
-}
-
-_bluealsa_handle_service_stopped() {
-	[[ $(type -t bluealsa_service_stopped) == function ]] && {
-		bluealsa_service_stopped
-	}
-}
-
-_bluealsa_handle_internal_event() {
-	[[ $(type -t bluealsa_handle_internal_event) == function ]] && {
-		bluealsa_handle_internal_event "$1"
-	}
-}
-
 _bluealsa_monitor_finished() {
-	[[ $(type -t bluealsa_monitor_finished) == function ]] && {
-		bluealsa_monitor_finished
-	}
+	_bluealsa_monitor_call finished
 	_bluealsa_monitor_stop=1
 }
 
 _bluealsa_print_help() {
-	[[ $(type -t bluealsa_print_help) == function ]] && {
-		bluealsa_print_help
-	}
+	cat <<-EOF
+	Usage:
+	  $0 [option ... ]
+
+	Options:
+	  -B,--dbus=     select the bluealsa d-bus suffix
+	  -h,--help      print help message and exit
+	  -v,--version   print version and exit
+	EOF
+
+	_bluealsa_monitor_call print_help
+}
+
+_bluealsa_monitor_parse_options() {
+	while (( $# > 0 )) ; do
+		case "$1" in
+			-B|--dbus)
+				bluealsa_dbus_suffix="$2"
+				_bluealsa_dbus_arg="--dbus=$2"
+				shift 2
+				;;
+			-h|--help)
+				_bluealsa_print_help
+				exit 0
+				;;
+			-v|--version)
+				echo "@version@"
+				exit 0
+				;;
+			*)
+				shift
+				;;
+		esac
+	done
 }
 
 ################################################################################
@@ -162,18 +184,6 @@ _bluealsa_print_help() {
 # Public functions
 #
 ################################################################################
-
-bluealsa_help() {
-	cat <<-EOF
-	Usage:
-	  $0 [option ... ]
-
-	Options:
-	  -B,--dbus=     select the bluealsa d-bus suffix
-	EOF
-
-	_bluealsa_print_help
-}
 
 # print device alias from Bluez to stdout
 # $1 device dbus object path
@@ -190,7 +200,6 @@ bluealsa_internal_event() {
 	printf "MonitorInternal %s\n" "$1" >&$_bluealsa_monitor_fd
 }
 
-# $1 - optional bluealsa dbus suffix
 bluealsa_monitor() {
 
 	$(_bluealsa_cli_version_check) || {
@@ -198,33 +207,21 @@ bluealsa_monitor() {
 		return 1
 	}
 
-	[[ $(type -t bluealsa_pcm_added) == function ]] || {
-		echo "Function bluealsa_pcm_added not defined" >&2
-		return 1
-	}
+	_bluealsa_monitor_call init
 
-	[[ $(type -t bluealsa_pcm_removed) == function ]] || {
-		echo "Function bluealsa_pcm_removed not defined" >&2
-		return 1
-	}
-
-	_bluealsa_monitor_init
-
-	local dbus_arg=""
-	[[ -n "$1" ]] && dbus_arg="--dbus=$1"
 	local fifo=$(mktemp -u)
 	mkfifo $fifo
 	exec {_bluealsa_monitor_fd}<>$fifo
 	rm $fifo
 
 	local cli_pid
-	bluealsa-cli $dbus_arg --quiet --verbose monitor >&$_bluealsa_monitor_fd &
+	bluealsa-cli $_bluealsa_dbus_arg --quiet --verbose monitor >&$_bluealsa_monitor_fd &
 	cli_pid=$!
 	trap "kill $cli_pid; _bluealsa_monitor_finished; exec {_bluealsa_monitor_fd}>&-" INT TERM
 
 	_bluealsa_add_initial_pcms
 
-	_bluealsa_monitor_start
+	_bluealsa_monitor_call start
 
 	unset _bluealsa_monitor_stop
 	local REPLY addr
@@ -244,18 +241,18 @@ bluealsa_monitor() {
 				;;
 			PCMRemoved*)
 				bluealsa_new_pcm=()
-				bluealsa_pcm_removed "${REPLY#PCMRemoved }"
+				_bluealsa_monitor_call pcm_removed "${REPLY#PCMRemoved }"
 				;;
 			ServiceRunning*)
 				bluealsa_new_pcm=()
-				_bluealsa_handle_service_started
+				_bluealsa_monitor_call service_started
 				;;
 			ServiceStopped*)
 				bluealsa_new_pcm=()
-				_bluealsa_handle_service_stopped
+				_bluealsa_monitor_call service_stopped
 				;;
 			MonitorInternal*)
-				_bluealsa_handle_internal_event "${REPLY#MonitorInternal }"
+				_bluealsa_monitor_call handle_internal_event "${REPLY#MonitorInternal }"
 				;;
 			*)
 				_bluealsa_set_property "$REPLY"
@@ -263,3 +260,9 @@ bluealsa_monitor() {
 		esac
 	done
 }
+
+_bluealsa_monitor_parse_options "$@"
+for _bluealsa_module in $bluealsa_monitor_modules; do
+	[[ $(type -t ${_bluealsa_module}_parse_options) == function ]] && ${_bluealsa_module}_parse_options "$@"
+done
+
