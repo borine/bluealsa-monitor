@@ -185,7 +185,7 @@ alsaconf_udev_trigger() {
 
 alsaconf_init() {
 	alsaconf_running=
-	alsaconf_srv=",SRV=org.bluealsa.$bluealsa_dbus_suffix"
+	[[ "$bluealsa_dbus_suffix" ]] && alsaconf_srv=",SRV=org.bluealsa.$bluealsa_dbus_suffix"
 
 	[[ "$alsaconf_use_default" = false ]] || alsaconf_parse_default
 
