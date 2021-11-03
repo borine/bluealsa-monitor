@@ -1,4 +1,4 @@
-project('bluealsa-monitor', version: '0.0.1', license: 'Unlicense')
+project('bluealsa-monitor', version: '0.0.2', license: 'Unlicense')
 
 monitor_script = 'bluealsa-monitor'
 
