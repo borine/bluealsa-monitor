@@ -140,6 +140,7 @@ _bluealsa_add_initial_pcms() {
 _bluealsa_monitor_finished() {
 	_bluealsa_monitor_call finished
 	_bluealsa_monitor_stop=1
+	echo "MonitorInternal STOP" > $_bluealsa_monitor_fd
 }
 
 _bluealsa_print_help() {
@@ -185,6 +186,17 @@ _bluealsa_monitor_parse_options() {
 #
 ################################################################################
 
+# Create an anonymous FIFO
+# @param $1 name of variable to store the FIFO fd
+bluealsa_create_fifo() {
+	declare -n descriptor="$1"
+	local path=$(mktemp -u)
+	mkfifo $path
+	exec {descriptor}<>$path
+	rm $path
+}
+
+
 # print device alias from Bluez to stdout
 # $1 device dbus object path
 bluealsa_get_alias() {
@@ -209,10 +221,7 @@ bluealsa_monitor() {
 
 	_bluealsa_monitor_call init
 
-	local fifo=$(mktemp -u)
-	mkfifo $fifo
-	exec {_bluealsa_monitor_fd}<>$fifo
-	rm $fifo
+	bluealsa_create_fifo _bluealsa_monitor_fd
 
 	local cli_pid
 	bluealsa-cli $_bluealsa_dbus_arg --quiet --verbose monitor >&$_bluealsa_monitor_fd &

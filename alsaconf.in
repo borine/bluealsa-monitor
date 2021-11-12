@@ -33,6 +33,7 @@ ALSACONF_USER_CONFIG="$HOME/.asoundrc"
 alsaconf_profile=a2dp
 alsaconf_stream=duplex
 alsaconf_transport_filter=a2dp
+alsaconf_mode_filter=source,sink
 alsaconf_srv=""
 alsaconf_conffile=""
 alsaconf_global=0
@@ -83,7 +84,7 @@ while (( $# > 0 )) ; do
 		-d|--default)
 			alsaconf_use_default="a2dp,capture,playback"
 			shift
-			[[ -n "$1" ]] && use_default="$1"
+			[[ -n "$1" ]] && alsaconf_use_default="$1"
 			shift
 			;;
 		*)
@@ -306,7 +307,7 @@ alsaconf_pcm_removed() {
 
 alsaconf_service_stopped() {
 	for item in "${!alsaconf_pcms[@]}" ; do
-		remove_namehint "$item"
+		alsaconf_remove_namehint "$item"
 	done
 	sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null
 	[[ "$alsaconf_use_default" = false ]] || sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null

@@ -1,4 +1,4 @@
-project('bluealsa-monitor', version: '0.0.2', license: 'Unlicense')
+project('bluealsa-monitor', version: '0.0.3', license: 'Unlicense')
 
 monitor_script = 'bluealsa-monitor'
 
@@ -59,6 +59,7 @@ install_data(
 )
 
 mytouch = find_program('touch')
+
 asoundrc = custom_target(
 	'asoundrc',
 	output: 'asoundrc',
@@ -67,6 +68,9 @@ asoundrc = custom_target(
 	install_dir: statedir,
 	install_mode: ['rw-rw-r--', 'root', 'audio']
 )
+
+meson.add_install_script('sh', '-c', 'chown "root:audio" "$DESTDIR/$1"', '_', statedir)
+meson.add_install_script('sh', '-c', 'chmod 775 "$DESTDIR/$1"', '_', statedir)
 
 if systemd.found()
 	unitdir = join_paths(prefix, 'lib', 'systemd', 'user')
