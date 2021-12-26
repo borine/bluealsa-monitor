@@ -28,7 +28,7 @@
 
 # revision @version@
 
-bluealsa_monitor_modules="alsaconf pulse"
+bluealsa_monitor_modules="alsaconf pulse udev"
 
 source @libdir@/monitor-funcs || exit 1
 

@@ -140,7 +140,7 @@ _bluealsa_add_initial_pcms() {
 _bluealsa_monitor_finished() {
 	_bluealsa_monitor_call finished
 	_bluealsa_monitor_stop=1
-	echo "MonitorInternal STOP" > $_bluealsa_monitor_fd
+	echo "MonitorInternal STOP" >&$_bluealsa_monitor_fd
 }
 
 _bluealsa_print_help() {
@@ -196,7 +196,6 @@ bluealsa_create_fifo() {
 	rm $path
 }
 
-
 # print device alias from Bluez to stdout
 # $1 device dbus object path
 bluealsa_get_alias() {
@@ -204,6 +203,20 @@ bluealsa_get_alias() {
 	    org.freedesktop.DBus.Properties.Get \
 		string:"org.bluez.Device1" string:"Alias")
 	printf "%s" "${alias#   variant       }"
+}
+
+# print runtime directory to stdout
+bluealsa_rundir() {
+	local rundir=$(echo "$XDG_RUNTIME_DIR")
+	if [[ -z "$rundir" ]] ; then
+		rundir=~/.local/
+		if [[ ! -d "$rundir" ]] ; then
+			rundir=/tmp/
+		fi
+	fi
+	rundir="$rundir/bluealsa-monitor"
+	mkdir -p "$rundir"
+	printf "%s" "$rundir"
 }
 
 # Generate an internal event

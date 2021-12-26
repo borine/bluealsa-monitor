@@ -91,7 +91,7 @@ pulse_parse_types() {
 			'a2dp') a2dp=1 ;;
 			'sco') sco=1 ;;
 			*) 
-				echo "Invalid --default argument '$word'" >&2
+				echo "Invalid --pulse argument '$word'" >&2
 				exit 1
 				;;
 		esac
@@ -146,7 +146,7 @@ pulse_pcm_added() {
 	[[ "$rate" -eq 0 ]] && rate=8000
 	local fragment_size=$(( $PULSE_FRAGMENT_MSEC * $sample_size * $channels * $rate / 1000 ))
 
-	local module_id=$(pactl load-module "module-alsa-$mode" "format='$format'" "rate='$rate'" "channels='$channels'" "fragments='$PULSE_FRAGMENTS'" "fragment_size='$fragment_size'" "fixed_latency_range='true'" "device='$device'" "${mode}_name='$name'" "${mode}_properties=device.description='$description'device.icon_name=$PULSE_ICON_NAME")
+	local module_id=$(pactl load-module "module-alsa-$mode" "format='$format'" "rate='$rate'" "channels='$channels'" "fragments='$PULSE_FRAGMENTS'" "fragment_size='$fragment_size'" "fixed_latency_range='true'" "device='$device'" "${mode}_name='$name'" "${mode}_properties=device.description='$description'device.icon_name=$PULSE_ICON_NAME" 2>/dev/null)
 
 	[[ -n "$module_id" ]] && pulse_modules[${bluealsa_new_pcm[id]}]=$module_id
 }

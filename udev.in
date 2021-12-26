@@ -1,0 +1,140 @@
+# This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# For more information, please refer to <https://unlicense.org>
+#
+
+
+# revision @version@
+
+udev_trigger_set=0
+
+declare -A udev_type
+
+# select which device types to generate udev event for
+# outputs (speakers, headphones) are "sinks"
+# inputs (microphones) are "sources"
+# either comment out lines with unwanted types, or set value to "no"
+udev_type[a2dp_sink]=yes
+udev_type[a2dp_source]=yes
+udev_type[sco_sink]=yes
+udev_type[sco_source]=yes
+
+udev_shortopts="u::"
+udev_longopts="udev::"
+
+udev_print_help() {
+	cat <<-EOF
+	  -u,--udev     generate udev event for device connect/dusconnect
+	                   - optional arg: [a2dp|sco][,[capture|playback]]
+	                   - default is a2dp, both capture and playback
+	EOF
+}
+
+udev_parse_options() {
+	while (( $# > 0 )) ; do
+		case "$1" in
+			-p|--udev)
+				bluealsa_monitor_enable_udev=true
+				shift
+				[[ -n "$1" ]] && udev_types="$1"
+				shift
+				;;
+			*) shift ;;
+		esac
+	done
+}
+
+udev_parse_types() {
+	local IFS=','
+	local temp=( $udev_types )
+	local word sink source a2dp sco
+	for word in "${temp[@]}"; do
+		case "$word" in
+			'capture') source=1 ;;
+			'playback') sink=1 ;;
+			'a2dp') a2dp=1 ;;
+			'sco') sco=1 ;;
+			*) 
+				echo "Invalid --udev argument '$word'" >&2
+				exit 1
+				;;
+		esac
+	done
+	[[ "$source" = 1 ]] && {
+		[[ "$a2dp" = 1 ]] || udev_type[a2dp_source]=no
+		[[ "$sco" = 1 ]] || udev_type[sco_source]=no
+	}
+	[[ "$sink" = 1 ]] && {
+		[[ "$a2dp" = 1 ]] || udev_type[a2dp_sink]=no
+		[[ "$sco" = 1 ]] || udev_type[sco_sink]=no
+	}
+}
+
+# generate synthetic udev event
+udev_action() {
+	bluealsa_internal_event UdevTrigger
+	sudo -n /bin/udevadm trigger --action=change /dev/snd/controlC0
+}
+
+# trigger a udev soundcard event
+# delay the action for a short time to avoid multiple events for a device
+# that supports multiple PCMs
+udev_trigger() {
+	[[ "$bluealsa_monitor_enable_udev" ]] || return
+	[[ "$udev_trigger_set" = 0 ]] || return
+	udev_trigger_set=1
+	{ sleep 0.5 ; udev_action ; } &
+}
+
+udev_init() {
+	[[ "$bluealsa_monitor_enable_udev" ]] || return
+	[[ "$udev_types" ]] && udev_parse_types
+}
+
+udev_pcm_added() {
+	[[ "$bluealsa_monitor_enable_udev" ]] || return
+	local profile=a2dp
+	[[ "${bluealsa_new_pcm[profile]}" = HFP || "${bluealsa_new_pcm[profile]}" = HSP ]] && profile=sco
+	[[ ${udev_type[${profile}_${bluealsa_new_pcm[mode]}]} = yes ]] || return
+	udev_trigger
+}
+
+udev_pcm_removed() {
+	[[ "$bluealsa_monitor_enable_udev" ]] || return
+	udev_trigger
+}
+
+udev_service_stopped() {
+	[[ "$bluealsa_monitor_enable_udev" ]] || return
+	udev_trigger
+}
+
+udev_handle_internal_event() {
+	[[ "$1" = UdevTrigger ]] && udev_trigger_set=0
+}
+
+udev_finished() {
+	udev_service_stopped
+}
+

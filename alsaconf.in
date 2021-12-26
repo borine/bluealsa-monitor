@@ -26,20 +26,13 @@
 
 # revision @version@
 
-ALSACONF_DEFAULT_GLOBAL_CONF_FILE=@statedir@/asoundrc
-ALSACONF_DEFAULT_USER_CONF_FILE=$HOME/.asoundrc-bluealsa
-ALSACONF_USER_CONFIG="$HOME/.asoundrc"
-
 alsaconf_profile=a2dp
 alsaconf_stream=duplex
 alsaconf_transport_filter=a2dp
 alsaconf_mode_filter=source,sink
 alsaconf_srv=""
 alsaconf_conffile=""
-alsaconf_global=0
-alsaconf_use_udev=0
 alsaconf_use_default=false
-alsaconf_udev_trigger_set=0
 
 
 declare -A alsaconf_pcms
@@ -49,38 +42,20 @@ declare -A alsaconf_Output_defaults
 
 declare -a alsaconf_alsaver
 
-alsaconf_shortopts="d::f:gu"
-alsaconf_longopts="default::,file:,global,udev"
+alsaconf_shortopts="d::"
+alsaconf_longopts="default::"
 
 alsaconf_print_help() {
 	cat <<-EOF
 	  -d,--default   make bluealsa PCM the ALSA default when connected
 	                   - optional arg: [a2dp|sco][,[capture|playback]]
 	                   - default is a2dp, both capture and playback
-	  -f,--file=     absolute path to dynamic ALSA config file
-	                   - default $ALSACONF_DEFAULT_USER_CONF_FILE,
-	                     or $ALSACONF_DEFAULT_GLOBAL_CONF_FILE
-	                     if --global option set
-	  -g,--global    do not include into users ~/.asoundrc
-	  -u,--udev      emit udev event on device connect and disconnect
 	EOF
 }
 
 alsaconf_parse_options() {
 while (( $# > 0 )) ; do
 	case "$1" in
-		-f|--file)
-			alsaconf_conffile="$2"
-			shift 2
-			;;
-		-g|--global)
-			alsaconf_global=1
-			shift
-			;;
-		-u|--udev)
-			alsaconf_use_udev=1
-			shift
-			;;
 		-d|--default)
 			alsaconf_use_default="a2dp,capture,playback"
 			shift
@@ -168,35 +143,12 @@ alsaconf_init_config() {
 	EOF
 }
 
-# generate synthetic udev event
-alsaconf_udev_action() {
-	bluealsa_internal_event UdevTrigger
-	sudo -n /bin/udevadm trigger --action=change /dev/snd/controlC0
-}
-
-# trigger a udev soundcard event
-# delay the action for a short time to avoid multiple events for a device
-# that supports multiple PCMs
-alsaconf_udev_trigger() {
-	[[ "$alsaconf_use_udev" = 1 ]] || return
-	[[ "$alsaconf_udev_trigger_set" = 0 ]] || return
-	alsaconf_udev_trigger_set=1
-	{ sleep 0.5 ; alsaconf_udev_action ; } &
-}
-
 alsaconf_init() {
 	alsaconf_running=
+	alsaconf_conffile="$(bluealsa_rundir)/asoundrc"
 	[[ "$bluealsa_dbus_suffix" ]] && alsaconf_srv=",SRV=org.bluealsa.$bluealsa_dbus_suffix"
 
 	[[ "$alsaconf_use_default" = false ]] || alsaconf_parse_default
-
-	if [[ -z "$alsaconf_conffile" ]] ; then
-		if [[ $alsaconf_global = 0 ]] ; then
-			alsaconf_conffile=$ALSACONF_DEFAULT_USER_CONF_FILE
-		else
-			alsaconf_conffile=$ALSACONF_DEFAULT_GLOBAL_CONF_FILE
-		fi
-	fi
 
 	# For libasound version < 1.2.3.2, we need to include the tag "DESC" in a namehint
 	alsaconf_DESC="DESC"
@@ -205,12 +157,6 @@ alsaconf_init() {
 		if [[ "${alsaconf_alsaver[2]}" -gt 3 || "${alsaconf_alsaver[3]}" -ge 2 ]] ; then 
 			alsaconf_DESC=""
 		fi
-	fi
-
-	# include bluealsa config into user config
-	if [[ $alsaconf_global = 0 ]] ; then
-		[[ -f "$ALSACONF_USER_CONFIG" ]] || touch "$ALSACONF_USER_CONFIG"
-		grep -q "^<$alsaconf_conffile>" "$ALSACONF_USER_CONFIG" || printf "%s\n" "<$alsaconf_conffile>" >> "$ALSACONF_USER_CONFIG"
 	fi
 
 	alsaconf_init_config
@@ -288,21 +234,18 @@ alsaconf_set_default() {
 alsaconf_start() {
 	alsaconf_running=true
 	alsaconf_set_default
-	alsaconf_udev_trigger
 }
 
 alsaconf_pcm_added() {
 	alsaconf_add_namehint
 	[[ $alsaconf_running ]] && {
 		alsaconf_set_default
-		alsaconf_udev_trigger
 	}
 }
 
 alsaconf_pcm_removed() {
 	alsaconf_remove_namehint "$1"
 	alsaconf_set_default
-	alsaconf_udev_trigger
 }
 
 alsaconf_service_stopped() {
@@ -311,14 +254,8 @@ alsaconf_service_stopped() {
 	done
 	sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null
 	[[ "$alsaconf_use_default" = false ]] || sed -i '/^pcm.!default/d' "$alsaconf_conffile" 2>/dev/null
-	alsaconf_udev_trigger
-}
-
-alsaconf_handle_internal_event() {
-	[[ "$1" = UdevTrigger ]] && alsaconf_udev_trigger_set=0
 }
 
 alsaconf_finished() {
 	alsaconf_service_stopped
-	[[ $alsaconf_global = 0 ]] && sed -i '/^<'${alsaconf_conffile//\//\\/}'>$/d' "$ALSACONF_USER_CONFIG"
 }
