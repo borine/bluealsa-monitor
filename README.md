@@ -30,10 +30,10 @@ section
 below for more information.
 
 The script relies on the `bluealsa-cli` utility which is part of the above
-bluez-alsa project. bluez-alsa v3.2.0 or later is required as earlier versions
-of `bluealsa-cli` did not have the needed functions for this script. It is
-necessary to include the configure option `--enable-cli` when building BlueALSA
-to build this utility.
+bluez-alsa project. bluez-alsa v3.1.0 or earlier did not have the needed
+capabilities in the `bluealsa-cli` utility required by this script, so you
+will need a more recent version. It is necessary to include the configure
+option `--enable-cli` when building BlueALSA to build this utility.
 
 _namehint_ configuration entries are created that cause ALSA client
 applications to include connected bluetooth PCMs in their listed PCM devices.
