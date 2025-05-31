@@ -1,5 +1,13 @@
 # Automated ALSA Configuration For BlueALSA PCMs
 
+> [!Warning]
+> This project is now deprecated and unmaintained. It is no longer compatible
+> with the [bluez-alsa](https://github.com/arkq/bluez-alsa) upstream sources
+> and should not be used.
+>
+> For equivalent functionality please look at the
+> [bluealsa-autoconfig](https://github.com/borine/bluealsa-autoconfig) project.
+
 This project is a companion to, and requires installation of, BlueALSA - see
 https://github.com/Arkq/bluez-alsa
 
